@@ -18,7 +18,7 @@ fmt:
 	golangci-lint fmt
 
 vuln:
-	go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+	go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
 check: lint test
 
