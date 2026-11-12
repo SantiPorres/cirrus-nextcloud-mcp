@@ -1,0 +1,47 @@
+# Example deployment: the MCP server reachable only through nginx, which
+# terminates TLS and checks a Bearer token.
+#
+#   cp ../.env.example .env            # Nextcloud settings (see the comments in the file)
+#   echo "MCP_BEARER_TOKEN=$(openssl rand -hex 32)" >> .env
+#   mkdir certs                        # put fullchain.pem and privkey.pem there
+#   GIT_COMMIT=$(git rev-parse HEAD) docker compose -f docker-compose.example.yml up -d --build
+#
+# Clients then connect to https://<host>:8443/mcp with the header
+#   Authorization: Bearer <MCP_BEARER_TOKEN>
+name: cirrus-nextcloud-mcp
+
+services:
+  mcp:
+    build:
+      context: ..
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    image: cirrus-nextcloud-mcp:local
+    env_file: .env
+    environment:
+      MCP_TRANSPORT: streamable-http
+      MCP_HTTP_ADDR: ":8000"
+    # No "ports": the server is only reachable from the proxy, on the internal network.
+    networks: [internal]
+    read_only: true
+    tmpfs:
+      - /tmp # scratch space for nc_render_pdf
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+  proxy:
+    image: nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
+    depends_on: [mcp]
+    environment:
+      MCP_BEARER_TOKEN: ${MCP_BEARER_TOKEN:?set MCP_BEARER_TOKEN in .env, e.g. with openssl rand -hex 32}
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./certs:/etc/nginx/certs:ro
+    networks: [internal]
+    restart: unless-stopped
+
+networks:
+  internal:
