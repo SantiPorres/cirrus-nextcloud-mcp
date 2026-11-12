@@ -59,6 +59,12 @@ type multistatus struct {
 				Favorite     string `xml:"http://owncloud.org/ns favorite"`
 				CreationTime string `xml:"http://nextcloud.org/ns creation_time"`
 				UploadTime   string `xml:"http://nextcloud.org/ns upload_time"`
+
+				TrashName     string `xml:"http://nextcloud.org/ns trashbin-filename"`
+				TrashLocation string `xml:"http://nextcloud.org/ns trashbin-original-location"`
+				TrashTime     string `xml:"http://nextcloud.org/ns trashbin-deletion-time"`
+				VersionLabel  string `xml:"http://nextcloud.org/ns version-label"`
+				VersionAuthor string `xml:"http://nextcloud.org/ns version-author"`
 			} `xml:"DAV: prop"`
 		} `xml:"DAV: propstat"`
 	} `xml:"DAV: response"`
@@ -114,9 +120,10 @@ func (c *Client) parseEntries(body []byte) ([]Entry, error) {
 	return entries, nil
 }
 
-func (c *Client) propfind(ctx context.Context, abs, depth string) ([]Entry, error) {
-	body := `<?xml version="1.0" encoding="UTF-8"?><d:propfind ` + davNamespaces + `><d:prop>` + davProps + `</d:prop></d:propfind>`
-	resp, err := c.do(ctx, "PROPFIND", c.filesURL(abs), []byte(body), map[string]string{
+// propfindRaw runs a PROPFIND for the given properties and returns the raw multistatus body.
+func (c *Client) propfindRaw(ctx context.Context, rawURL, depth, props string) ([]byte, error) {
+	body := `<?xml version="1.0" encoding="UTF-8"?><d:propfind ` + davNamespaces + `><d:prop>` + props + `</d:prop></d:propfind>`
+	resp, err := c.do(ctx, "PROPFIND", rawURL, []byte(body), map[string]string{
 		"Depth": depth, "Content-Type": "text/xml",
 	})
 	if err != nil {
@@ -129,6 +136,14 @@ func (c *Client) propfind(ctx context.Context, abs, depth string) ([]Entry, erro
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	if err != nil {
 		return nil, Errorf("Could not read the answer from Nextcloud.")
+	}
+	return data, nil
+}
+
+func (c *Client) propfind(ctx context.Context, abs, depth string) ([]Entry, error) {
+	data, err := c.propfindRaw(ctx, c.filesURL(abs), depth, davProps)
+	if err != nil {
+		return nil, err
 	}
 	return c.parseEntries(data)
 }

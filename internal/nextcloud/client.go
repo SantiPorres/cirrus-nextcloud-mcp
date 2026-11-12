@@ -52,6 +52,7 @@ type Client struct {
 	base string
 	// filesPrefix is the unescaped URL path of the user's WebDAV home.
 	filesPrefix string
+	caps        capabilityCache
 }
 
 // New builds a client. The HTTP client never follows redirects and keeps no cookies.
@@ -82,6 +83,16 @@ func (c *Client) Scrub(text string) string {
 		return text
 	}
 	return strings.ReplaceAll(text, secret, "[redacted]")
+}
+
+// davURL returns the URL of a WebDAV collection of the user other than the
+// files home, e.g. davURL("trashbin", "trash", id).
+func (c *Client) davURL(collection string, segments ...string) string {
+	out := c.base + "/remote.php/dav/" + collection + "/" + url.PathEscape(c.cfg.User)
+	for _, segment := range segments {
+		out += "/" + url.PathEscape(segment)
+	}
+	return out
 }
 
 // filesURL returns the WebDAV URL of an absolute path in the account.

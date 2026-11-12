@@ -4,8 +4,8 @@ A standalone, reusable [MCP](https://modelcontextprotocol.io) server for Nextclo
 It gives an assistant controlled access to the files of one Nextcloud account over `stdio` or
 streamable HTTP.
 
-> **Status:** under construction. The `files` and `sheets` groups are implemented; safe file
-> operations, binaries, metadata and sharing arrive in the next phases. Full documentation
+> **Status:** under construction. The `files`, `sheets`, `safe_ops` and `diagnostics` groups are implemented;
+> binaries, metadata and sharing arrive in the next phases. Full documentation
 > (reverse proxy example, Compose file, Spanish section) comes with the packaging phase.
 
 ## Safety model
@@ -68,6 +68,32 @@ read back afterwards (`"verified"`).
 Known limits: growing an Excel table (`ListObject`) on append recreates it with the same name,
 range and style, so totals rows and calculated columns of that table are not preserved; a
 sheet-level autofilter is extended only when the workbook declares it as a defined name.
+
+## Tools: `safe_ops` group
+
+| Tool | Needs | Purpose |
+|---|---|---|
+| `nc_move` | write | Move or rename; fails if the destination exists |
+| `nc_copy` | write | Copy; fails if the destination exists |
+| `nc_delete` | delete | Move to the trash bin (refused when Nextcloud has no trash bin) |
+| `nc_trash_list` | read | Deleted items that can be restored |
+| `nc_trash_restore` | write | Put a deleted item back |
+| `nc_versions_list` | read | Previous versions of a file |
+| `nc_versions_restore` | write | Make a previous version current, if the file's ETag still matches |
+
+There is no tool that deletes permanently or empties the trash. Only trash items that were
+inside the configured root are listed or restorable.
+
+Known limits: Nextcloud itself bypasses the trash for files larger than the space the trash
+may use; `nc_delete` reports when the item cannot be found in the trash afterwards. Restoring a
+version is checked against the ETag just before the request, not atomically with it.
+
+## Tools: `diagnostics` group
+
+`get_server_info` returns the version and commit, start time, enabled groups, the tools that
+exist and the ones that are switched off (with the reason), and configuration flags. It never
+returns credentials, the Nextcloud address, the account name or any path. With
+`check_connection=true` it also reports whether Nextcloud answers and its version.
 
 ## Development
 
