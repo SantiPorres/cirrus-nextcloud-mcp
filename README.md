@@ -4,8 +4,8 @@ A standalone, reusable [MCP](https://modelcontextprotocol.io) server for Nextclo
 It gives an assistant controlled access to the files of one Nextcloud account over `stdio` or
 streamable HTTP.
 
-> **Status:** under construction. The `files`, `sheets`, `safe_ops` and `diagnostics` groups are implemented;
-> binaries, metadata and sharing arrive in the next phases. Full documentation
+> **Status:** under construction. The `files`, `sheets`, `safe_ops`, `binary` and `diagnostics` groups are
+> implemented; metadata and sharing arrive in the next phase. Full documentation
 > (reverse proxy example, Compose file, Spanish section) comes with the packaging phase.
 
 ## Safety model
@@ -87,6 +87,24 @@ inside the configured root are listed or restorable.
 Known limits: Nextcloud itself bypasses the trash for files larger than the space the trash
 may use; `nc_delete` reports when the item cannot be found in the trash afterwards. Restoring a
 version is checked against the ETag just before the request, not atomically with it.
+
+## Tools: `binary` group
+
+| Tool | Needs | Purpose |
+|---|---|---|
+| `nc_download` | read | Any file as an embedded resource; large files in parts with `offset`/`length` |
+| `nc_upload_start` | write | Open an upload for a new file |
+| `nc_upload_chunk` | write | Send one base64 piece |
+| `nc_upload_finish` | write | Join the pieces; optional SHA-256 check |
+| `nc_read_image` | read | An image as image content, scaled down and turned upright |
+| `nc_render_pdf` | read + `pdftoppm` | PDF pages as images (at most 5 per call) |
+
+Binary data is returned as MCP resource or image content, never as base64 inside the text the
+model reads. Uploads only create files: an existing path is refused when starting and again by
+Nextcloud itself when finishing (`Overwrite: F`). The upload state lives in Nextcloud's own
+chunked-upload area, so the server stays stateless. `nc_render_pdf` needs `pdftoppm`
+(poppler-utils, included in the Docker image); without it the tool is not registered.
+Limits: `NEXTCLOUD_MAX_EMBED_BYTES`, `NEXTCLOUD_MAX_CHUNK_BYTES`, `NEXTCLOUD_MAX_UPLOAD_BYTES`.
 
 ## Tools: `diagnostics` group
 
