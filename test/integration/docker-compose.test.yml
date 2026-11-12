@@ -1,0 +1,22 @@
+# A throwaway Nextcloud for the integration tests. Never use these settings
+# (SQLite, plain HTTP, a fixed password) for a real installation.
+name: cirrus-nextcloud-mcp-test
+
+services:
+  nextcloud:
+    image: nextcloud:33.0.10-apache@sha256:81cb09055a20142521a267cea2bc27e6a81a065871c70850d209f08803567dbc
+    environment:
+      SQLITE_DATABASE: nextcloud
+      NEXTCLOUD_ADMIN_USER: admin
+      NEXTCLOUD_ADMIN_PASSWORD: integration-test-only
+      NEXTCLOUD_TRUSTED_DOMAINS: localhost 127.0.0.1
+    ports:
+      - "127.0.0.1:8089:80"
+    tmpfs:
+      - /var/www/html/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost/status.php | grep -q '\"installed\":true'"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 20s
