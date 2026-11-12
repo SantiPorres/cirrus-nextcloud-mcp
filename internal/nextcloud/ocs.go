@@ -25,6 +25,9 @@ func (c *Client) ocs(ctx context.Context, method, path string, form url.Values, 
 		return err
 	}
 	defer drain(resp)
+	if resp.StatusCode == http.StatusNotModified {
+		return nil // "nothing new", e.g. an empty activity stream
+	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if err != nil {
 		return Errorf("Could not read the answer from Nextcloud.")

@@ -65,6 +65,15 @@ type multistatus struct {
 				TrashTime     string `xml:"http://nextcloud.org/ns trashbin-deletion-time"`
 				VersionLabel  string `xml:"http://nextcloud.org/ns version-label"`
 				VersionAuthor string `xml:"http://nextcloud.org/ns version-author"`
+
+				ID               string `xml:"http://owncloud.org/ns id"`
+				DisplayName      string `xml:"http://owncloud.org/ns display-name"`
+				UserVisible      string `xml:"http://owncloud.org/ns user-visible"`
+				UserAssignable   string `xml:"http://owncloud.org/ns user-assignable"`
+				Message          string `xml:"http://owncloud.org/ns message"`
+				ActorID          string `xml:"http://owncloud.org/ns actorId"`
+				ActorDisplayName string `xml:"http://owncloud.org/ns actorDisplayName"`
+				CreationDateTime string `xml:"http://owncloud.org/ns creationDateTime"`
 			} `xml:"DAV: prop"`
 		} `xml:"DAV: propstat"`
 	} `xml:"DAV: response"`
@@ -189,12 +198,20 @@ func xmlText(s string) string {
 
 // search runs a WebDAV SEARCH limited to the configured root.
 func (c *Client) search(ctx context.Context, where string, limit int) ([]Entry, error) {
+	return c.searchOrdered(ctx, where, "", limit)
+}
+
+// searchOrdered is search with an optional <d:orderby> content.
+func (c *Client) searchOrdered(ctx context.Context, where, orderBy string, limit int) ([]Entry, error) {
+	if orderBy != "" {
+		orderBy = `<d:orderby>` + orderBy + `</d:orderby>`
+	}
 	scope := xmlText("/files/" + c.cfg.User + c.cfg.Root)
 	body := `<?xml version="1.0" encoding="UTF-8"?>` +
 		`<d:searchrequest ` + davNamespaces + `><d:basicsearch>` +
 		`<d:select><d:prop>` + davProps + `</d:prop></d:select>` +
 		`<d:from><d:scope><d:href>` + scope + `</d:href><d:depth>infinity</d:depth></d:scope></d:from>` +
-		`<d:where>` + where + `</d:where>` +
+		`<d:where>` + where + `</d:where>` + orderBy +
 		`<d:limit><d:nresults>` + strconv.Itoa(limit) + `</d:nresults></d:limit>` +
 		`</d:basicsearch></d:searchrequest>`
 	resp, err := c.do(ctx, "SEARCH", c.base+"/remote.php/dav/", []byte(body), map[string]string{"Content-Type": "text/xml"})
