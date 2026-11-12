@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.27.4-alpine AS build
+FROM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -14,7 +14,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
       -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${GIT_COMMIT}" \
       -o /out/cirrus-nextcloud-mcp ./cmd/cirrus-nextcloud-mcp
 
-FROM alpine:3.22
+FROM alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f
 # poppler-utils provides pdftoppm, used by nc_render_pdf.
 RUN apk add --no-cache ca-certificates poppler-utils \
  && addgroup -S -g 10001 cirrus \

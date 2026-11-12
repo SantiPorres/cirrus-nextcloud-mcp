@@ -58,3 +58,15 @@ jobs:
       - name: Nextcloud logs
         if: failure()
         run: docker compose -f test/integration/docker-compose.test.yml logs --tail 200
+
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the image
+        run: docker build --build-arg GIT_COMMIT=${{ github.sha }} -t cirrus-nextcloud-mcp:ci .
+      - name: The image runs as an unprivileged user and knows its commit
+        run: |
+          test "$(docker run --rm --entrypoint id cirrus-nextcloud-mcp:ci -u)" != "0"
+          docker run --rm cirrus-nextcloud-mcp:ci version | grep -q "${{ github.sha }}"
+          docker run --rm --entrypoint pdftoppm cirrus-nextcloud-mcp:ci -v

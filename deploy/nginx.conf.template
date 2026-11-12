@@ -1,0 +1,55 @@
+# Reverse proxy in front of cirrus-nextcloud-mcp.
+#
+# The MCP server does not authenticate anyone. This proxy does: it terminates
+# TLS and only forwards requests that carry "Authorization: Bearer <token>".
+#
+# The official nginx image renders this template at start-up, replacing
+# ${MCP_BEARER_TOKEN} with the value of that environment variable.
+
+# Limits how fast one client can call, per client address.
+limit_req_zone $binary_remote_addr zone=mcp:10m rate=20r/s;
+
+# "1" when the Authorization header is exactly the expected one.
+map $http_authorization $mcp_authorized {
+    default                      0;
+    "Bearer ${MCP_BEARER_TOKEN}" 1;
+}
+
+server {
+    listen 8443 ssl;
+    http2 on;
+    server_name _;
+
+    ssl_certificate     /etc/nginx/certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    # Tokens must not end up in logs: log neither headers nor query strings.
+    access_log /var/log/nginx/access.log combined;
+    server_tokens off;
+
+    # Base64 pieces of nc_upload_chunk are about 1.4 MB with the default limits.
+    client_max_body_size 8m;
+
+    location = /mcp {
+        if ($mcp_authorized = 0) {
+            add_header WWW-Authenticate 'Bearer realm="mcp"' always;
+            return 401;
+        }
+        limit_req zone=mcp burst=40 nodelay;
+
+        proxy_pass http://mcp:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        # The token is for this proxy only; the MCP server never sees it.
+        proxy_set_header Authorization "";
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+    }
+
+    # Everything else, including /healthz, stays private.
+    location / {
+        return 404;
+    }
+}
