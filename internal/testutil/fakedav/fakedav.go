@@ -33,6 +33,16 @@ type Node struct {
 	ETag        string
 	Modified    time.Time
 	Permissions string
+	// Versions are the previous contents, oldest first.
+	Versions []Version
+	Favorite bool
+}
+
+// Version is a previous content of a file.
+type Version struct {
+	ID       string
+	Data     []byte
+	Modified time.Time
 }
 
 // Request is one recorded request.
@@ -54,12 +64,25 @@ type Server struct {
 	// unconditional counts PUTs that replaced an existing file without If-Match.
 	unconditional int
 	beforePut     func()
+
+	// trashEnabled mirrors the files_trashbin app. When false, DELETE destroys data.
+	trashEnabled bool
+	trash        []*trashItem
+	// permanent counts items destroyed by a DELETE while the trash was disabled.
+	permanent int
+	// NextcloudVersion is reported by the capabilities endpoint.
+	NextcloudVersion string
+
+	sessions map[string]map[int][]byte // upload id -> chunk index -> data
+	previews map[int][]byte            // file id -> preview image
+	meta     metaState
 }
 
 // New starts a fake server that is closed when the test ends.
 func New(t testing.TB) *Server {
 	t.Helper()
-	s := &Server{nodes: map[string]*Node{}, nextID: 100}
+	s := &Server{nodes: map[string]*Node{}, nextID: 100, trashEnabled: true, NextcloudVersion: "33.0.0",
+		sessions: map[string]map[int][]byte{}, previews: map[int][]byte{}}
 	s.nodes[""] = &Node{ID: 1, Dir: true, Modified: time.Now(), Permissions: "RGDNVCK"}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(s.Close)
@@ -103,12 +126,62 @@ func (s *Server) AddFile(p string, data []byte) int {
 	p = clean(p)
 	s.addDir(parent(p))
 	if node := s.nodes[p]; node != nil {
-		node.Data, node.ETag, node.Modified = data, s.newETag(), time.Now()
+		s.replace(node, data)
 		return node.ID
 	}
 	s.nextID++
 	s.nodes[p] = &Node{ID: s.nextID, Data: data, ETag: s.newETag(), Modified: time.Now(), Permissions: "RGDNVW"}
 	return s.nextID
+}
+
+// replace sets new content, keeping the old one as a version, like Nextcloud does.
+func (s *Server) replace(node *Node, data []byte) {
+	s.version++
+	node.Versions = append(node.Versions, Version{
+		ID: strconv.Itoa(1700000000 + s.version), Data: node.Data, Modified: node.Modified,
+	})
+	node.Data, node.ETag, node.Modified = data, s.newETag(), time.Now()
+}
+
+// DisableTrash makes the fake behave like a Nextcloud without the trash bin app.
+func (s *Server) DisableTrash() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.trashEnabled = false
+}
+
+// DeleteToTrash deletes a path directly, as another client of the same account would.
+func (s *Server) DeleteToTrash(p string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.remove(httptest.NewRecorder(), clean(p))
+}
+
+// TrashIDs returns the ids of everything in the trash, oldest first.
+func (s *Server) TrashIDs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make([]string, 0, len(s.trash))
+	for _, item := range s.trash {
+		ids = append(ids, item.id)
+	}
+	return ids
+}
+
+// PermanentDeletes is how many items a DELETE destroyed for good. It must stay 0.
+func (s *Server) PermanentDeletes() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.permanent
+}
+
+// SetModified changes the modification time of a file or folder.
+func (s *Server) SetModified(p string, when time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if node := s.nodes[clean(p)]; node != nil {
+		node.Modified = when
+	}
 }
 
 // File returns the content of a file and whether it exists.
@@ -176,6 +249,17 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/remote.php/dav/" && r.Method == "SEARCH":
 		s.search(w, r)
+	case r.URL.Path == "/ocs/v2.php/cloud/capabilities":
+		s.capabilities(w)
+	case s.serveMeta(w, r):
+	case r.URL.Path == "/index.php/core/preview":
+		s.preview(w, r)
+	case strings.HasPrefix(r.URL.Path, uploadsPrefix):
+		s.uploads(w, r, strings.Trim(strings.TrimPrefix(r.URL.Path, uploadsPrefix), "/"))
+	case strings.HasPrefix(r.URL.Path, trashPrefix):
+		s.trashbin(w, r, strings.Trim(strings.TrimPrefix(r.URL.Path, trashPrefix), "/"))
+	case strings.HasPrefix(r.URL.Path, versionsPrefix):
+		s.versions(w, r, strings.Trim(strings.TrimPrefix(r.URL.Path, versionsPrefix), "/"))
 	case r.URL.Path == filesPrefix || strings.HasPrefix(r.URL.Path, filesPrefix+"/"):
 		s.files(w, r, clean(strings.TrimPrefix(r.URL.Path, filesPrefix)))
 	default:
@@ -207,9 +291,29 @@ func (s *Server) files(w http.ResponseWriter, r *http.Request, p string) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
+		if ifMatch := r.Header.Get("If-Match"); ifMatch != "" && ifMatch != node.ETag {
+			w.WriteHeader(http.StatusPreconditionFailed)
+			return
+		}
 		w.Header().Set("ETag", node.ETag)
-		w.Header().Set("Content-Length", strconv.Itoa(len(node.Data)))
-		_, _ = w.Write(node.Data)
+		w.Header().Set("Content-Type", contentType(p))
+		data := node.Data
+		if m := rangePattern.FindStringSubmatch(r.Header.Get("Range")); m != nil {
+			from, _ := strconv.Atoi(m[1])
+			to, _ := strconv.Atoi(m[2])
+			if from >= len(data) {
+				w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+				return
+			}
+			to = min(to, len(data)-1)
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", from, to, len(data)))
+			w.Header().Set("Content-Length", strconv.Itoa(to-from+1))
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write(data[from : to+1])
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+		_, _ = w.Write(data)
 
 	case http.MethodPut:
 		data, _ := io.ReadAll(r.Body)
@@ -230,7 +334,7 @@ func (s *Server) files(w http.ResponseWriter, r *http.Request, p string) {
 			if ifMatch == "" {
 				s.unconditional++
 			}
-			node.Data, node.ETag, node.Modified = data, s.newETag(), time.Now()
+			s.replace(node, data)
 			w.Header().Set("ETag", node.ETag)
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -256,9 +360,43 @@ func (s *Server) files(w http.ResponseWriter, r *http.Request, p string) {
 			w.WriteHeader(http.StatusCreated)
 		}
 
+	case "MOVE", "COPY":
+		s.transfer(w, r, p)
+
+	case "REPORT":
+		s.filterFiles(w, r, p)
+
+	case "PROPPATCH":
+		raw, _ := io.ReadAll(r.Body)
+		if node == nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		node.Favorite = strings.Contains(string(raw), "<oc:favorite>1</oc:favorite>")
+		w.WriteHeader(http.StatusMultiStatus)
+
+	case http.MethodDelete:
+		s.remove(w, p)
+
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+var rangePattern = regexp.MustCompile(`^bytes=(\d+)-(\d+)$`)
+
+func contentType(p string) string {
+	switch strings.ToLower(p[strings.LastIndex(p, ".")+1:]) {
+	case "png":
+		return "image/png"
+	case "jpg", "jpeg":
+		return "image/jpeg"
+	case "pdf":
+		return "application/pdf"
+	case "md", "txt":
+		return "text/plain; charset=utf-8"
+	}
+	return "application/octet-stream"
 }
 
 var (
@@ -281,6 +419,22 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		limit, _ = strconv.Atoi(m[1])
 	}
 	byID := strings.Contains(body, "<oc:fileid/></d:prop><d:literal>")
+	if strings.Contains(body, "<d:getlastmodified/></d:prop><d:literal>") {
+		since, _ := time.Parse(time.RFC3339, literal)
+		var recent []string
+		for p, node := range s.nodes {
+			inScope := scope == "" || strings.HasPrefix(p, scope+"/")
+			if p != "" && inScope && !node.Dir && node.Modified.After(since) {
+				recent = append(recent, p)
+			}
+		}
+		sort.Slice(recent, func(i, j int) bool { return s.nodes[recent[i]].Modified.After(s.nodes[recent[j]].Modified) })
+		if len(recent) > limit {
+			recent = recent[:limit]
+		}
+		s.multistatus(w, recent)
+		return
+	}
 
 	var paths []string
 	for p, node := range s.nodes {
@@ -328,7 +482,11 @@ func (s *Server) multistatus(w http.ResponseWriter, paths []string) {
 		b.WriteString(`<d:response><d:href>` + href + `</d:href><d:propstat><d:prop>`)
 		fmt.Fprintf(&b, `<d:getlastmodified>%s</d:getlastmodified><d:getetag>%s</d:getetag>`,
 			node.Modified.UTC().Format(http.TimeFormat), strings.ReplaceAll(node.ETag, `"`, "&quot;"))
-		fmt.Fprintf(&b, `<oc:fileid>%d</oc:fileid><oc:permissions>%s</oc:permissions><oc:favorite>0</oc:favorite>`, node.ID, node.Permissions)
+		favorite := 0
+		if node.Favorite {
+			favorite = 1
+		}
+		fmt.Fprintf(&b, `<oc:fileid>%d</oc:fileid><oc:permissions>%s</oc:permissions><oc:favorite>%d</oc:favorite>`, node.ID, node.Permissions, favorite)
 		if node.Dir {
 			b.WriteString(`<d:resourcetype><d:collection/></d:resourcetype><oc:size>0</oc:size>`)
 			// Like Nextcloud, report the properties a folder lacks in a 404 block.

@@ -59,6 +59,21 @@ type multistatus struct {
 				Favorite     string `xml:"http://owncloud.org/ns favorite"`
 				CreationTime string `xml:"http://nextcloud.org/ns creation_time"`
 				UploadTime   string `xml:"http://nextcloud.org/ns upload_time"`
+
+				TrashName     string `xml:"http://nextcloud.org/ns trashbin-filename"`
+				TrashLocation string `xml:"http://nextcloud.org/ns trashbin-original-location"`
+				TrashTime     string `xml:"http://nextcloud.org/ns trashbin-deletion-time"`
+				VersionLabel  string `xml:"http://nextcloud.org/ns version-label"`
+				VersionAuthor string `xml:"http://nextcloud.org/ns version-author"`
+
+				ID               string `xml:"http://owncloud.org/ns id"`
+				DisplayName      string `xml:"http://owncloud.org/ns display-name"`
+				UserVisible      string `xml:"http://owncloud.org/ns user-visible"`
+				UserAssignable   string `xml:"http://owncloud.org/ns user-assignable"`
+				Message          string `xml:"http://owncloud.org/ns message"`
+				ActorID          string `xml:"http://owncloud.org/ns actorId"`
+				ActorDisplayName string `xml:"http://owncloud.org/ns actorDisplayName"`
+				CreationDateTime string `xml:"http://owncloud.org/ns creationDateTime"`
 			} `xml:"DAV: prop"`
 		} `xml:"DAV: propstat"`
 	} `xml:"DAV: response"`
@@ -114,9 +129,10 @@ func (c *Client) parseEntries(body []byte) ([]Entry, error) {
 	return entries, nil
 }
 
-func (c *Client) propfind(ctx context.Context, abs, depth string) ([]Entry, error) {
-	body := `<?xml version="1.0" encoding="UTF-8"?><d:propfind ` + davNamespaces + `><d:prop>` + davProps + `</d:prop></d:propfind>`
-	resp, err := c.do(ctx, "PROPFIND", c.filesURL(abs), []byte(body), map[string]string{
+// propfindRaw runs a PROPFIND for the given properties and returns the raw multistatus body.
+func (c *Client) propfindRaw(ctx context.Context, rawURL, depth, props string) ([]byte, error) {
+	body := `<?xml version="1.0" encoding="UTF-8"?><d:propfind ` + davNamespaces + `><d:prop>` + props + `</d:prop></d:propfind>`
+	resp, err := c.do(ctx, "PROPFIND", rawURL, []byte(body), map[string]string{
 		"Depth": depth, "Content-Type": "text/xml",
 	})
 	if err != nil {
@@ -129,6 +145,14 @@ func (c *Client) propfind(ctx context.Context, abs, depth string) ([]Entry, erro
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	if err != nil {
 		return nil, Errorf("Could not read the answer from Nextcloud.")
+	}
+	return data, nil
+}
+
+func (c *Client) propfind(ctx context.Context, abs, depth string) ([]Entry, error) {
+	data, err := c.propfindRaw(ctx, c.filesURL(abs), depth, davProps)
+	if err != nil {
+		return nil, err
 	}
 	return c.parseEntries(data)
 }
@@ -174,12 +198,20 @@ func xmlText(s string) string {
 
 // search runs a WebDAV SEARCH limited to the configured root.
 func (c *Client) search(ctx context.Context, where string, limit int) ([]Entry, error) {
+	return c.searchOrdered(ctx, where, "", limit)
+}
+
+// searchOrdered is search with an optional <d:orderby> content.
+func (c *Client) searchOrdered(ctx context.Context, where, orderBy string, limit int) ([]Entry, error) {
+	if orderBy != "" {
+		orderBy = `<d:orderby>` + orderBy + `</d:orderby>`
+	}
 	scope := xmlText("/files/" + c.cfg.User + c.cfg.Root)
 	body := `<?xml version="1.0" encoding="UTF-8"?>` +
 		`<d:searchrequest ` + davNamespaces + `><d:basicsearch>` +
 		`<d:select><d:prop>` + davProps + `</d:prop></d:select>` +
 		`<d:from><d:scope><d:href>` + scope + `</d:href><d:depth>infinity</d:depth></d:scope></d:from>` +
-		`<d:where>` + where + `</d:where>` +
+		`<d:where>` + where + `</d:where>` + orderBy +
 		`<d:limit><d:nresults>` + strconv.Itoa(limit) + `</d:nresults></d:limit>` +
 		`</d:basicsearch></d:searchrequest>`
 	resp, err := c.do(ctx, "SEARCH", c.base+"/remote.php/dav/", []byte(body), map[string]string{"Content-Type": "text/xml"})

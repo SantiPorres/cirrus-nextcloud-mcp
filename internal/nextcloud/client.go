@@ -25,9 +25,19 @@ import (
 )
 
 // Error is a failure that is safe and useful to show to the MCP client.
-type Error struct{ Message string }
+type Error struct {
+	Message string
+	// Status is the HTTP status Nextcloud answered with, when that is what failed.
+	Status int
+}
 
 func (e *Error) Error() string { return e.Message }
+
+// IsNotFound reports whether err is Nextcloud saying the resource does not exist.
+func IsNotFound(err error) bool {
+	var typed *Error
+	return errors.As(err, &typed) && typed.Status == http.StatusNotFound
+}
 
 // Errorf builds a user-facing Error.
 func Errorf(format string, args ...any) *Error {
@@ -42,6 +52,7 @@ type Client struct {
 	base string
 	// filesPrefix is the unescaped URL path of the user's WebDAV home.
 	filesPrefix string
+	caps        capabilityCache
 }
 
 // New builds a client. The HTTP client never follows redirects and keeps no cookies.
@@ -72,6 +83,16 @@ func (c *Client) Scrub(text string) string {
 		return text
 	}
 	return strings.ReplaceAll(text, secret, "[redacted]")
+}
+
+// davURL returns the URL of a WebDAV collection of the user other than the
+// files home, e.g. davURL("trashbin", "trash", id).
+func (c *Client) davURL(collection string, segments ...string) string {
+	out := c.base + "/remote.php/dav/" + collection + "/" + url.PathEscape(c.cfg.User)
+	for _, segment := range segments {
+		out += "/" + url.PathEscape(segment)
+	}
+	return out
 }
 
 // filesURL returns the WebDAV URL of an absolute path in the account.
@@ -114,7 +135,7 @@ func (c *Client) do(ctx context.Context, method, rawURL string, body []byte, hea
 		}
 		return nil, Errorf("Could not reach Nextcloud: %s", c.Scrub(err.Error()))
 	}
-	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 && resp.StatusCode != http.StatusNotModified {
 		drain(resp)
 		return nil, Errorf("Nextcloud answered with a redirect (HTTP %d), which is never followed. Check NEXTCLOUD_URL.", resp.StatusCode)
 	}
@@ -138,7 +159,7 @@ func statusError(resp *http.Response) error {
 	case code == http.StatusForbidden:
 		return Errorf("Nextcloud denied access to this resource. The account may not have permission.")
 	case code == http.StatusNotFound:
-		return Errorf("Not found, or the Nextcloud user has no access to it.")
+		return &Error{Message: "Not found, or the Nextcloud user has no access to it.", Status: code}
 	case code == http.StatusLocked:
 		return Errorf("The file is locked (probably open in an editor). Try again later.")
 	case code == http.StatusInsufficientStorage:

@@ -103,6 +103,12 @@ type Config struct {
 	// Limits, in bytes.
 	MaxDownloadBytes int64
 	MaxTextBytes     int64
+	// MaxEmbedBytes is the largest file nc_download returns in one piece.
+	MaxEmbedBytes int64
+	// MaxChunkBytes is the largest piece of a chunked download or upload.
+	MaxChunkBytes int64
+	// MaxUploadBytes is the largest file that can be uploaded.
+	MaxUploadBytes int64
 }
 
 // Getenv is the signature of os.Getenv, so tests can supply their own environment.
@@ -156,6 +162,9 @@ func Load(getenv Getenv) (*Config, error) {
 
 		MaxDownloadBytes: number("NEXTCLOUD_MAX_DOWNLOAD_BYTES", 25*1024*1024, 1),
 		MaxTextBytes:     number("NEXTCLOUD_MAX_TEXT_BYTES", 2*1024*1024, 1),
+		MaxEmbedBytes:    number("NEXTCLOUD_MAX_EMBED_BYTES", 2*1024*1024, 1),
+		MaxChunkBytes:    number("NEXTCLOUD_MAX_CHUNK_BYTES", 1024*1024, 1),
+		MaxUploadBytes:   number("NEXTCLOUD_MAX_UPLOAD_BYTES", 100*1024*1024, 1),
 	}
 
 	// Connection.

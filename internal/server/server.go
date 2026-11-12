@@ -14,7 +14,13 @@ import (
 	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/config"
 	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/nextcloud"
 	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools"
+	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools/binary"
+	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools/diagnostics"
 	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools/files"
+	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools/metadata"
+	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools/safeops"
+	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools/sharing"
+	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools/sheets"
 )
 
 // Name is the server name announced to MCP clients.
@@ -37,7 +43,15 @@ func New(cfg *config.Config, client *nextcloud.Client, build Build, logger *slog
 		Instructions: instructions,
 	})
 	registry := tools.NewRegistry(server, cfg, client, logger)
+	registry.Build = tools.Build{Name: Name, Version: build.Version, Commit: build.Commit, StartedAt: time.Now()}
 	files.Register(registry)
+	sheets.Register(registry)
+	safeops.Register(registry)
+	binary.Register(registry)
+	metadata.Register(registry)
+	sharing.Register(registry)
+	// Last, so that it can report on every other tool.
+	diagnostics.Register(registry)
 	return server, registry
 }
 

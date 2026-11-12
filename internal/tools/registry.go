@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sort"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -45,6 +46,14 @@ type Spec struct {
 	Unavailable string
 }
 
+// Build describes the running server, for diagnostics.
+type Build struct {
+	Name      string
+	Version   string
+	Commit    string
+	StartedAt time.Time
+}
+
 // Registry adds tools to an MCP server, leaving out those the configuration
 // does not allow. A tool that is left out is invisible to the client.
 type Registry struct {
@@ -52,6 +61,7 @@ type Registry struct {
 	Config *config.Config
 	Client *nextcloud.Client
 	Logger *slog.Logger
+	Build  Build
 
 	active  []string
 	skipped map[string]string
