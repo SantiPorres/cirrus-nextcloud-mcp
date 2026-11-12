@@ -13,3 +13,7 @@
 .idea/
 .vscode/
 .DS_Store
+
+# Local deployment files
+/deploy/certs/
+/deploy/.env
