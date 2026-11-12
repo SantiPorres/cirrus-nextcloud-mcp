@@ -15,6 +15,7 @@ import (
 	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/nextcloud"
 	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools"
 	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools/files"
+	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools/sheets"
 )
 
 // Name is the server name announced to MCP clients.
@@ -38,6 +39,7 @@ func New(cfg *config.Config, client *nextcloud.Client, build Build, logger *slog
 	})
 	registry := tools.NewRegistry(server, cfg, client, logger)
 	files.Register(registry)
+	sheets.Register(registry)
 	return server, registry
 }
 
