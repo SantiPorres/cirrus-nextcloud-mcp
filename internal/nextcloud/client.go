@@ -25,9 +25,19 @@ import (
 )
 
 // Error is a failure that is safe and useful to show to the MCP client.
-type Error struct{ Message string }
+type Error struct {
+	Message string
+	// Status is the HTTP status Nextcloud answered with, when that is what failed.
+	Status int
+}
 
 func (e *Error) Error() string { return e.Message }
+
+// IsNotFound reports whether err is Nextcloud saying the resource does not exist.
+func IsNotFound(err error) bool {
+	var typed *Error
+	return errors.As(err, &typed) && typed.Status == http.StatusNotFound
+}
 
 // Errorf builds a user-facing Error.
 func Errorf(format string, args ...any) *Error {
@@ -138,7 +148,7 @@ func statusError(resp *http.Response) error {
 	case code == http.StatusForbidden:
 		return Errorf("Nextcloud denied access to this resource. The account may not have permission.")
 	case code == http.StatusNotFound:
-		return Errorf("Not found, or the Nextcloud user has no access to it.")
+		return &Error{Message: "Not found, or the Nextcloud user has no access to it.", Status: code}
 	case code == http.StatusLocked:
 		return Errorf("The file is locked (probably open in an editor). Try again later.")
 	case code == http.StatusInsufficientStorage:

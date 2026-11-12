@@ -4,7 +4,7 @@ A standalone, reusable [MCP](https://modelcontextprotocol.io) server for Nextclo
 It gives an assistant controlled access to the files of one Nextcloud account over `stdio` or
 streamable HTTP.
 
-> **Status:** under construction. The `files` group is implemented; spreadsheets, safe file
+> **Status:** under construction. The `files` and `sheets` groups are implemented; safe file
 > operations, binaries, metadata and sharing arrive in the next phases. Full documentation
 > (reverse proxy example, Compose file, Spanish section) comes with the packaging phase.
 
@@ -48,6 +48,26 @@ Every setting is described in [`.env.example`](.env.example).
 | `nc_edit_file` | write | Replace an exact piece of text |
 | `nc_edit_lines` | write | Replace a range of lines |
 | `nc_create_folder` | write + `NEXTCLOUD_FOLDER_WRITE_PREFIX` | Create folders under the allowed prefix |
+
+## Tools: `sheets` group
+
+Spreadsheets are treated as tables: row 1 is the header, every other row is a record.
+
+| Tool | Needs | Purpose |
+|---|---|---|
+| `nc_sheet_read` | read | Rows as `{header: value}`, headers, sheet names and the next free id |
+| `nc_sheet_append_rows` | write + pattern | Add records, copying the format of the last one |
+| `nc_sheet_update_cells` | write + pattern | Change cells of one record, optionally checking expected values |
+| `nc_sheet_create` | write + pattern | Create a workbook, or add a sheet to an existing one |
+
+"Pattern" means the file must match `NEXTCLOUD_EDITABLE_SPREADSHEETS` (for example
+`Decisions*.xlsx,Plans/*/matrix.xlsx`); with no pattern, no spreadsheet can be modified. Sheets
+listed in `NEXTCLOUD_PROTECTED_SHEETS` are never written to. Every save uses `If-Match` and is
+read back afterwards (`"verified"`).
+
+Known limits: growing an Excel table (`ListObject`) on append recreates it with the same name,
+range and style, so totals rows and calculated columns of that table are not preserved; a
+sheet-level autofilter is extended only when the workbook declares it as a defined name.
 
 ## Development
 
