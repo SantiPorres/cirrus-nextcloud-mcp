@@ -33,6 +33,8 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - name: Install pdftoppm (for the PDF rendering tests)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils
       - run: go vet ./...
       - run: go test -race -count=1 ./...
       - name: Build
@@ -47,6 +49,8 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - name: Install pdftoppm (for the PDF rendering tests)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils
       - name: Start Nextcloud
         run: make integration-up
       - name: Integration tests

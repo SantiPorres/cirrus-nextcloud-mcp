@@ -14,6 +14,7 @@ import (
 	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/config"
 	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/nextcloud"
 	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools"
+	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools/binary"
 	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools/diagnostics"
 	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools/files"
 	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools/safeops"
@@ -44,6 +45,7 @@ func New(cfg *config.Config, client *nextcloud.Client, build Build, logger *slog
 	files.Register(registry)
 	sheets.Register(registry)
 	safeops.Register(registry)
+	binary.Register(registry)
 	// Last, so that it can report on every other tool.
 	diagnostics.Register(registry)
 	return server, registry

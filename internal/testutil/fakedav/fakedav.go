@@ -71,12 +71,16 @@ type Server struct {
 	permanent int
 	// NextcloudVersion is reported by the capabilities endpoint.
 	NextcloudVersion string
+
+	sessions map[string]map[int][]byte // upload id -> chunk index -> data
+	previews map[int][]byte            // file id -> preview image
 }
 
 // New starts a fake server that is closed when the test ends.
 func New(t testing.TB) *Server {
 	t.Helper()
-	s := &Server{nodes: map[string]*Node{}, nextID: 100, trashEnabled: true, NextcloudVersion: "33.0.0"}
+	s := &Server{nodes: map[string]*Node{}, nextID: 100, trashEnabled: true, NextcloudVersion: "33.0.0",
+		sessions: map[string]map[int][]byte{}, previews: map[int][]byte{}}
 	s.nodes[""] = &Node{ID: 1, Dir: true, Modified: time.Now(), Permissions: "RGDNVCK"}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(s.Close)
@@ -236,6 +240,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.search(w, r)
 	case r.URL.Path == "/ocs/v2.php/cloud/capabilities":
 		s.capabilities(w)
+	case r.URL.Path == "/index.php/core/preview":
+		s.preview(w, r)
+	case strings.HasPrefix(r.URL.Path, uploadsPrefix):
+		s.uploads(w, r, strings.Trim(strings.TrimPrefix(r.URL.Path, uploadsPrefix), "/"))
 	case strings.HasPrefix(r.URL.Path, trashPrefix):
 		s.trashbin(w, r, strings.Trim(strings.TrimPrefix(r.URL.Path, trashPrefix), "/"))
 	case strings.HasPrefix(r.URL.Path, versionsPrefix):
@@ -271,9 +279,29 @@ func (s *Server) files(w http.ResponseWriter, r *http.Request, p string) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
+		if ifMatch := r.Header.Get("If-Match"); ifMatch != "" && ifMatch != node.ETag {
+			w.WriteHeader(http.StatusPreconditionFailed)
+			return
+		}
 		w.Header().Set("ETag", node.ETag)
-		w.Header().Set("Content-Length", strconv.Itoa(len(node.Data)))
-		_, _ = w.Write(node.Data)
+		w.Header().Set("Content-Type", contentType(p))
+		data := node.Data
+		if m := rangePattern.FindStringSubmatch(r.Header.Get("Range")); m != nil {
+			from, _ := strconv.Atoi(m[1])
+			to, _ := strconv.Atoi(m[2])
+			if from >= len(data) {
+				w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+				return
+			}
+			to = min(to, len(data)-1)
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", from, to, len(data)))
+			w.Header().Set("Content-Length", strconv.Itoa(to-from+1))
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write(data[from : to+1])
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+		_, _ = w.Write(data)
 
 	case http.MethodPut:
 		data, _ := io.ReadAll(r.Body)
@@ -329,6 +357,22 @@ func (s *Server) files(w http.ResponseWriter, r *http.Request, p string) {
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+var rangePattern = regexp.MustCompile(`^bytes=(\d+)-(\d+)$`)
+
+func contentType(p string) string {
+	switch strings.ToLower(p[strings.LastIndex(p, ".")+1:]) {
+	case "png":
+		return "image/png"
+	case "jpg", "jpeg":
+		return "image/jpeg"
+	case "pdf":
+		return "application/pdf"
+	case "md", "txt":
+		return "text/plain; charset=utf-8"
+	}
+	return "application/octet-stream"
 }
 
 var (

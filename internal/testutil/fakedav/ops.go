@@ -229,3 +229,113 @@ func (s *Server) capabilities(w http.ResponseWriter) {
 func xmlEscape(text string) string {
 	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(text)
 }
+
+const uploadsPrefix = "/remote.php/dav/uploads/" + User + "/"
+
+// SetPreview makes the fake return image as the preview of a file id.
+func (s *Server) SetPreview(fileID int, image []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.previews[fileID] = image
+}
+
+// UploadSessions is how many chunked uploads are open.
+func (s *Server) UploadSessions() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.sessions)
+}
+
+func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(r.URL.Query().Get("fileId"))
+	image, ok := s.previews[id]
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	_, _ = w.Write(image)
+}
+
+func (s *Server) uploads(w http.ResponseWriter, r *http.Request, rest string) {
+	id, name, _ := strings.Cut(rest, "/")
+	session, exists := s.sessions[id]
+	switch {
+	case r.Method == "MKCOL" && name == "":
+		if exists {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		s.sessions[id] = map[int][]byte{}
+		w.WriteHeader(http.StatusCreated)
+
+	case !exists:
+		w.WriteHeader(http.StatusNotFound)
+
+	case r.Method == http.MethodPut:
+		index, err := strconv.Atoi(name)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		session[index], _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusCreated)
+
+	case r.Method == "PROPFIND" && name == "":
+		indexes := make([]int, 0, len(session))
+		for index := range session {
+			indexes = append(indexes, index)
+		}
+		sort.Ints(indexes)
+		var b strings.Builder
+		b.WriteString(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">`)
+		fmt.Fprintf(&b, `<d:response><d:href>%s%s/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`, uploadsPrefix, id)
+		for _, index := range indexes {
+			fmt.Fprintf(&b, `<d:response><d:href>%s%s/%05d</d:href><d:propstat><d:prop><d:getcontentlength>%d</d:getcontentlength><d:resourcetype/></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`,
+				uploadsPrefix, id, index, len(session[index]))
+		}
+		b.WriteString(`</d:multistatus>`)
+		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+		w.WriteHeader(http.StatusMultiStatus)
+		_, _ = io.WriteString(w, b.String())
+
+	case r.Method == "MOVE" && name == ".file":
+		target, ok := s.destination(r)
+		switch {
+		case !ok:
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		case s.nodes[parent(target)] == nil || !s.nodes[parent(target)].Dir:
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
+		// Like Nextcloud: If-None-Match on a MOVE is about the source, which exists.
+		if r.Header.Get("If-None-Match") == "*" {
+			w.WriteHeader(http.StatusPreconditionFailed)
+			return
+		}
+		if s.nodes[target] != nil {
+			if r.Header.Get("Overwrite") == "F" {
+				w.WriteHeader(http.StatusPreconditionFailed)
+				return
+			}
+			s.unconditional++
+		}
+		indexes := make([]int, 0, len(session))
+		for index := range session {
+			indexes = append(indexes, index)
+		}
+		sort.Ints(indexes)
+		var data []byte
+		for _, index := range indexes {
+			data = append(data, session[index]...)
+		}
+		s.nextID++
+		s.nodes[target] = &Node{ID: s.nextID, Data: data, ETag: s.newETag(), Modified: time.Now(), Permissions: "RGDNVW"}
+		delete(s.sessions, id)
+		w.WriteHeader(http.StatusCreated)
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
