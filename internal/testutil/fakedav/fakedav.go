@@ -35,6 +35,7 @@ type Node struct {
 	Permissions string
 	// Versions are the previous contents, oldest first.
 	Versions []Version
+	Favorite bool
 }
 
 // Version is a previous content of a file.
@@ -74,6 +75,7 @@ type Server struct {
 
 	sessions map[string]map[int][]byte // upload id -> chunk index -> data
 	previews map[int][]byte            // file id -> preview image
+	meta     metaState
 }
 
 // New starts a fake server that is closed when the test ends.
@@ -173,6 +175,15 @@ func (s *Server) PermanentDeletes() int {
 	return s.permanent
 }
 
+// SetModified changes the modification time of a file or folder.
+func (s *Server) SetModified(p string, when time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if node := s.nodes[clean(p)]; node != nil {
+		node.Modified = when
+	}
+}
+
 // File returns the content of a file and whether it exists.
 func (s *Server) File(p string) ([]byte, bool) {
 	s.mu.Lock()
@@ -240,6 +251,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.search(w, r)
 	case r.URL.Path == "/ocs/v2.php/cloud/capabilities":
 		s.capabilities(w)
+	case s.serveMeta(w, r):
 	case r.URL.Path == "/index.php/core/preview":
 		s.preview(w, r)
 	case strings.HasPrefix(r.URL.Path, uploadsPrefix):
@@ -351,6 +363,18 @@ func (s *Server) files(w http.ResponseWriter, r *http.Request, p string) {
 	case "MOVE", "COPY":
 		s.transfer(w, r, p)
 
+	case "REPORT":
+		s.filterFiles(w, r, p)
+
+	case "PROPPATCH":
+		raw, _ := io.ReadAll(r.Body)
+		if node == nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		node.Favorite = strings.Contains(string(raw), "<oc:favorite>1</oc:favorite>")
+		w.WriteHeader(http.StatusMultiStatus)
+
 	case http.MethodDelete:
 		s.remove(w, p)
 
@@ -395,6 +419,22 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		limit, _ = strconv.Atoi(m[1])
 	}
 	byID := strings.Contains(body, "<oc:fileid/></d:prop><d:literal>")
+	if strings.Contains(body, "<d:getlastmodified/></d:prop><d:literal>") {
+		since, _ := time.Parse(time.RFC3339, literal)
+		var recent []string
+		for p, node := range s.nodes {
+			inScope := scope == "" || strings.HasPrefix(p, scope+"/")
+			if p != "" && inScope && !node.Dir && node.Modified.After(since) {
+				recent = append(recent, p)
+			}
+		}
+		sort.Slice(recent, func(i, j int) bool { return s.nodes[recent[i]].Modified.After(s.nodes[recent[j]].Modified) })
+		if len(recent) > limit {
+			recent = recent[:limit]
+		}
+		s.multistatus(w, recent)
+		return
+	}
 
 	var paths []string
 	for p, node := range s.nodes {
@@ -442,7 +482,11 @@ func (s *Server) multistatus(w http.ResponseWriter, paths []string) {
 		b.WriteString(`<d:response><d:href>` + href + `</d:href><d:propstat><d:prop>`)
 		fmt.Fprintf(&b, `<d:getlastmodified>%s</d:getlastmodified><d:getetag>%s</d:getetag>`,
 			node.Modified.UTC().Format(http.TimeFormat), strings.ReplaceAll(node.ETag, `"`, "&quot;"))
-		fmt.Fprintf(&b, `<oc:fileid>%d</oc:fileid><oc:permissions>%s</oc:permissions><oc:favorite>0</oc:favorite>`, node.ID, node.Permissions)
+		favorite := 0
+		if node.Favorite {
+			favorite = 1
+		}
+		fmt.Fprintf(&b, `<oc:fileid>%d</oc:fileid><oc:permissions>%s</oc:permissions><oc:favorite>%d</oc:favorite>`, node.ID, node.Permissions, favorite)
 		if node.Dir {
 			b.WriteString(`<d:resourcetype><d:collection/></d:resourcetype><oc:size>0</oc:size>`)
 			// Like Nextcloud, report the properties a folder lacks in a 404 block.

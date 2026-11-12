@@ -17,7 +17,9 @@ import (
 	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools/binary"
 	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools/diagnostics"
 	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools/files"
+	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools/metadata"
 	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools/safeops"
+	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools/sharing"
 	"github.com/SantiPorres/cirrus-nextcloud-mcp/internal/tools/sheets"
 )
 
@@ -46,6 +48,8 @@ func New(cfg *config.Config, client *nextcloud.Client, build Build, logger *slog
 	sheets.Register(registry)
 	safeops.Register(registry)
 	binary.Register(registry)
+	metadata.Register(registry)
+	sharing.Register(registry)
 	// Last, so that it can report on every other tool.
 	diagnostics.Register(registry)
 	return server, registry

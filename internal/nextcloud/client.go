@@ -135,7 +135,7 @@ func (c *Client) do(ctx context.Context, method, rawURL string, body []byte, hea
 		}
 		return nil, Errorf("Could not reach Nextcloud: %s", c.Scrub(err.Error()))
 	}
-	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 && resp.StatusCode != http.StatusNotModified {
 		drain(resp)
 		return nil, Errorf("Nextcloud answered with a redirect (HTTP %d), which is never followed. Check NEXTCLOUD_URL.", resp.StatusCode)
 	}

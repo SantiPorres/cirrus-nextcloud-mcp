@@ -4,8 +4,7 @@ A standalone, reusable [MCP](https://modelcontextprotocol.io) server for Nextclo
 It gives an assistant controlled access to the files of one Nextcloud account over `stdio` or
 streamable HTTP.
 
-> **Status:** under construction. The `files`, `sheets`, `safe_ops`, `binary` and `diagnostics` groups are
-> implemented; metadata and sharing arrive in the next phase. Full documentation
+> **Status:** every tool group is implemented. Full documentation
 > (reverse proxy example, Compose file, Spanish section) comes with the packaging phase.
 
 ## Safety model
@@ -105,6 +104,40 @@ Nextcloud itself when finishing (`Overwrite: F`). The upload state lives in Next
 chunked-upload area, so the server stays stateless. `nc_render_pdf` needs `pdftoppm`
 (poppler-utils, included in the Docker image); without it the tool is not registered.
 Limits: `NEXTCLOUD_MAX_EMBED_BYTES`, `NEXTCLOUD_MAX_CHUNK_BYTES`, `NEXTCLOUD_MAX_UPLOAD_BYTES`.
+
+## Tools: `metadata` group
+
+| Tool | Needs | Purpose |
+|---|---|---|
+| `nc_tags_list` | read | System tags, or the tags of one file |
+| `nc_tag_search` | read | Files carrying a tag |
+| `nc_tag_create`, `nc_tag_assign`, `nc_tag_remove` | write | Manage tags on files |
+| `nc_favorites_list` | read | Favorite files |
+| `nc_favorite_set` | write | Mark or unmark a favorite |
+| `nc_comments_list` | read | Comments on a file |
+| `nc_comment_add` | write | Add a comment |
+| `nc_activity_list` | read | Recent activity (needs the Activity app) |
+| `nc_recent_files` | read | Files modified in the last days |
+| `nc_user_info` | read | The connected account and its quota |
+
+With `NEXTCLOUD_ROOT` set, tag and favorite searches, recent files and activity only return
+items inside it; activity that is not about a file is left out.
+
+## Tools: `sharing` group (off by default)
+
+Needs both `sharing` in `NEXTCLOUD_TOOL_GROUPS` and `NEXTCLOUD_ALLOW_SHARE=true`.
+
+| Tool | Purpose |
+|---|---|
+| `nc_shares_list` | Shares created by the account, inside the root |
+| `nc_share_create` | A public link, or a share with a Nextcloud user |
+| `nc_share_delete` | Stop sharing (the file is not touched) |
+
+Public links require a password (at least 10 characters) and an expiry date at most
+`NEXTCLOUD_SHARE_MAX_EXPIRY_DAYS` (30) days ahead, unless the operator relaxes
+`NEXTCLOUD_SHARE_REQUIRE_PASSWORD` / `NEXTCLOUD_SHARE_REQUIRE_EXPIRY`. Shares are read-only unless
+`permissions="edit"`; the right to re-share is never granted. Passwords and their hashes are
+never returned.
 
 ## Tools: `diagnostics` group
 
