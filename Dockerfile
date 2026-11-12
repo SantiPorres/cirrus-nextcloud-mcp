@@ -14,7 +14,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
       -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${GIT_COMMIT}" \
       -o /out/cirrus-nextcloud-mcp ./cmd/cirrus-nextcloud-mcp
 
-FROM alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 # poppler-utils provides pdftoppm, used by nc_render_pdf.
 RUN apk add --no-cache ca-certificates poppler-utils \
  && addgroup -S -g 10001 cirrus \
